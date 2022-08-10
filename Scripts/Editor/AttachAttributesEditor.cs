@@ -55,40 +55,24 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     /// Base class for Attach Attribute
     public class AttachAttributePropertyDrawer : PropertyDrawer
     {
-        private Color m_GUIColorDefault = new Color(.6f, .6f, .6f, 1);
-        private Color m_GUIColorNull = new Color(1f, .5f, .5f, 1);
-
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
         {
+            EditorGUI.BeginProperty(position, label, property);
+
             // turn off attribute if not active or in Play Mode (imitate as build will works)
-            if (!AttachAttributesUtils.IsEnabled || Application.isPlaying)
+            bool attachAttributeEnabled = AttachAttributesUtils.IsEnabled && !Application.isPlaying;
+            using (new EditorGUI.DisabledScope(disabled: attachAttributeEnabled))
             {
-                property.serializedObject.Update();
                 EditorGUI.PropertyField(position, property, label, true);
-                property.serializedObject.ApplyModifiedProperties();
-                return;
+                if (attachAttributeEnabled && property.objectReferenceValue == null)
+                {
+                    var type = property.GetPropertyType().StringToType();
+                    var go = (property.serializedObject.targetObject as Component).gameObject;
+                    UpdateProperty(property, go, type);
+                }
             }
 
-            bool isPropertyValueNull = property.objectReferenceValue == null;
-
-            // Change GUI color
-            var prevColor = GUI.color;
-            GUI.color = isPropertyValueNull ? m_GUIColorNull : m_GUIColorDefault;
-
-            // Default draw
-            EditorGUI.PropertyField(position, property, label, true);
-
-            // Get property type and GameObject
-            property.serializedObject.Update();
-            if (isPropertyValueNull)
-            {
-                var type = property.GetPropertyType().StringToType();
-                var go = ((MonoBehaviour)(property.serializedObject.targetObject)).gameObject;
-                UpdateProperty(property, go, type);
-            }
-
-            property.serializedObject.ApplyModifiedProperties();
-            GUI.color = prevColor;
+            EditorGUI.EndProperty();
         }
 
         /// Customize it for each attribute
