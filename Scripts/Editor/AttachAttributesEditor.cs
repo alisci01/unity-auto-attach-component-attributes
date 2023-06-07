@@ -225,7 +225,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     }
 
     /// CustomFetch
-    [CustomPropertyDrawer(typeof(CustomFetchAttribute))]
+    [CustomPropertyDrawer(typeof(CustomFetchAttribute), useForChildren: true)]
     public class CustomFetchAttributeEditor : AttachAttributePropertyDrawer
     {
         public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
