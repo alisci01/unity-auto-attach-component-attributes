@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Nrjwolf.Tools.AttachAttributes;
 using UnityEditor;
@@ -49,7 +51,65 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             return type;
         }
 
-        public static Type StringToType(this string aClassName) => System.AppDomain.CurrentDomain.GetAssemblies().SelectMany(x => x.GetTypes()).First(x => x.IsSubclassOf(typeof(Component)) && x.Name == aClassName);
+        // prefetch certain types
+        private static Type[] s_AllTypes = System.AppDomain.CurrentDomain.GetAssemblies().SelectMany(x => x.GetTypes()).ToArray();
+        private static Type[] s_AllComponentTypes = s_AllTypes.Where(x => x.IsSubclassOf(typeof(Component))).ToArray();
+        private static Type[] s_AllStaticTypes = s_AllTypes.Where(x => x.IsAbstract && x.IsSealed).ToArray();
+
+        public static Type StringToComponentType(this string aClassName) => s_AllComponentTypes.First(x => x.Name == aClassName);
+        public static Type StringToStaticType(this string aClassName) => s_AllStaticTypes.First(x => x.Name == aClassName);
+
+        private static Dictionary<(Type, string), MethodInfo> s_FetchMethods =
+            new Dictionary<(Type, string), MethodInfo>();
+        
+        public static MethodInfo GetFetchMethod(SerializedProperty baseProperty, string fetchFuncName)
+        {
+            MethodInfo ret = null;
+
+            Type baseType = null;
+            (Type, string) pair;
+            bool usesStaticMethod = fetchFuncName.Contains(".");
+
+            if (usesStaticMethod)
+            {
+                int posOfLastPeriod = fetchFuncName.LastIndexOf('.');
+                baseType = fetchFuncName.Substring(0, posOfLastPeriod).StringToStaticType();
+                fetchFuncName = fetchFuncName.Substring(posOfLastPeriod + 1);
+            }
+            else
+            {
+                baseType = baseProperty.serializedObject.targetObject.GetType();
+            }
+
+            pair = (baseType, fetchFuncName);
+            
+            if (!s_FetchMethods.TryGetValue(pair, out ret))
+            {
+                var bindingFlags = BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.NonPublic;
+                if (usesStaticMethod)
+                {
+                    bindingFlags |= BindingFlags.Static;
+                }
+                else
+                {
+                    bindingFlags |= BindingFlags.Instance;
+                }
+                
+                var method = baseType.GetMethod(fetchFuncName, bindingFlags);
+                var parameters = method?.GetParameters();
+
+                if (method != null && method.ReturnType == typeof(UnityEngine.Object))
+                {
+                    var validStaticMethod = parameters.Length == 1 && parameters[0].ParameterType == typeof(UnityEngine.GameObject);
+                    if (!usesStaticMethod || (usesStaticMethod && validStaticMethod))
+                    {
+                        ret = method;
+                    }
+                }
+            }
+
+            return ret;
+        }
     }
 
     /// Base class for Attach Attribute
@@ -66,7 +126,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
                 EditorGUI.PropertyField(position, property, label, true);
                 if (attachAttributeEnabled && property.objectReferenceValue == null)
                 {
-                    var type = property.GetPropertyType().StringToType();
+                    var type = property.GetPropertyType().StringToComponentType();
                     var go = (property.serializedObject.targetObject as Component).gameObject;
                     UpdateProperty(property, go, type);
                 }
@@ -161,6 +221,27 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
         {
             if (go.transform.parent != null)
                 property.objectReferenceValue = go.transform.parent.gameObject.GetComponent(type);
+        }
+    }
+
+    /// CustomFetch
+    [CustomPropertyDrawer(typeof(CustomFetchAttribute))]
+    public class CustomFetchAttributeEditor : AttachAttributePropertyDrawer
+    {
+        public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        {
+            CustomFetchAttribute fetchAttribute = (CustomFetchAttribute)attribute;
+            var methodInfo = AttachAttributesUtils.GetFetchMethod(property, fetchAttribute.CustomFuncName);
+
+            if (methodInfo == null)
+            {
+                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomFuncName}\"; ensure the method returns UnityEngine.Object and no parameters if it is not static. If the method is static, it must take a single GameObject parameter as well.", MessageType.Error);
+            }
+            else
+            {
+                object instance = methodInfo.IsStatic ? null : property.serializedObject.targetObject;
+                property.objectReferenceValue = (UnityEngine.Object)methodInfo.Invoke(instance, methodInfo.IsStatic ? new object[] { ((Component)property.serializedObject.targetObject).gameObject } : null);
+            }
         }
     }
     #endregion

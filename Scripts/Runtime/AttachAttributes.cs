@@ -26,5 +26,15 @@ namespace Nrjwolf.Tools.AttachAttributes
     [AttributeUsage(System.AttributeTargets.Field)] public class FindObjectOfTypeAttribute : AttachPropertyAttribute { }
     [AttributeUsage(System.AttributeTargets.Field)] public class GetComponentInParent : AttachPropertyAttribute { }
 
+    [AttributeUsage(System.AttributeTargets.Field)] public class CustomFetchAttribute : AttachPropertyAttribute
+    {
+        public string CustomFuncName;
+
+        public CustomFetchAttribute(string funcName)
+        {
+            CustomFuncName = funcName;
+        }
+    }
+
     public class AttachPropertyAttribute : PropertyAttribute { }
 }
