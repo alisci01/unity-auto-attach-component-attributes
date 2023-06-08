@@ -83,6 +83,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
 
             pair = (baseType, fetchFuncName);
             
+            // reflect the proper method if we don't have it cached already
             if (!s_FetchMethods.TryGetValue(pair, out ret))
             {
                 var bindingFlags = BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.NonPublic;
@@ -96,12 +97,18 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
                 }
                 
                 var method = baseType.GetMethod(fetchFuncName, bindingFlags);
-                var parameters = method?.GetParameters();
 
-                if (method != null && method.ReturnType == typeof(UnityEngine.Object))
+                // make sure the method returns our property type
+                if (method != null && method.ReturnType == baseProperty.GetPropertyType().StringToComponentType())
                 {
-                    var validStaticMethod = parameters.Length == 1 && parameters[0].ParameterType == typeof(UnityEngine.GameObject);
-                    if (!usesStaticMethod || (usesStaticMethod && validStaticMethod))
+                    var parameters = method.GetParameters();
+                    
+                    // static methods should only have a single GameObject parameters
+                    bool validStaticMethod = usesStaticMethod && parameters.Length == 1 && parameters[0].ParameterType == typeof(UnityEngine.GameObject);
+                    // instance methods should have no parameters at all
+                    bool validInstanceMethod = !usesStaticMethod && parameters.Length == 0;
+                    
+                    if (validInstanceMethod || validStaticMethod)
                     {
                         ret = method;
                     }
@@ -221,11 +228,12 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
         {
             if (go.transform.parent != null)
                 property.objectReferenceValue = go.transform.parent.gameObject.GetComponent(type);
+                
         }
     }
 
     /// CustomFetch
-    [CustomPropertyDrawer(typeof(CustomFetchAttribute), useForChildren: true)]
+    [CustomPropertyDrawer(typeof(BaseCustomFetchAttribute), useForChildren: true)]
     public class CustomFetchAttributeEditor : AttachAttributePropertyDrawer
     {
         public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
@@ -235,7 +243,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
 
             if (methodInfo == null)
             {
-                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomFuncName}\"; ensure the method returns UnityEngine.Object and no parameters if it is not static. If the method is static, it must take a single GameObject parameter as well.", MessageType.Error);
+                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomFuncName}\"; ensure the method returns {property.GetPropertyType()} and no parameters if it is not static. If the method is static, it must take a single GameObject parameter.", MessageType.Error);
             }
             else
             {
