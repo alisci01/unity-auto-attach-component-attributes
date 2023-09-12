@@ -29,14 +29,15 @@ namespace Nrjwolf.Tools.AttachAttributes
     [AttributeUsage(System.AttributeTargets.Field)]
     public class CustomFetchAttribute : BaseCustomFetchAttribute
     {
-        public CustomFetchAttribute(string funcName) : base(funcName) { }
+        public CustomFetchAttribute(string funcName, string validationFuncName = null) : base(funcName, validationFuncName) { }
     }
 
     public abstract class BaseCustomFetchAttribute : AttachPropertyAttribute
     {
         public string CustomFuncName;
+        public string CustomValidationFuncName;
 
-        protected BaseCustomFetchAttribute(string funcName)
+        protected BaseCustomFetchAttribute(string funcName, string validationFuncName = null)
         {
             CustomFuncName = funcName;
         }

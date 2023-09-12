@@ -61,30 +61,38 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
 
         private static Dictionary<(Type, string), MethodInfo> s_FetchMethods =
             new Dictionary<(Type, string), MethodInfo>();
-        
-        public static MethodInfo GetFetchMethod(SerializedProperty baseProperty, BaseCustomFetchAttribute attribute)
-        {
-            MethodInfo ret = null;
-            
-            int posOfLastPeriod = attribute.CustomFuncName.LastIndexOf('.');
-            Type baseType = attribute.CustomFuncName.Substring(0, posOfLastPeriod).StringToStaticType();
-            string fetchFuncName = attribute.CustomFuncName.Substring(posOfLastPeriod + 1);
 
-            (Type, string) pair = (baseType, fetchFuncName);
-            
+        private static MethodInfo GetCustomFetchMethod(SerializedProperty property, BaseCustomFetchAttribute attribute, string funcName, Type returnType, params Type[] parameterTypes)
+        {
+            int posOfLastPeriod = funcName.LastIndexOf('.');
+            Type baseType = funcName.Substring(0, posOfLastPeriod).StringToStaticType();
+            string localFuncName = funcName.Substring(posOfLastPeriod + 1);
+
+            (Type, string) pair = (baseType, localFuncName);
+
+            MethodInfo ret = null;
+
             // reflect the proper method if we don't have it cached already
             if (!s_FetchMethods.TryGetValue(pair, out ret))
             {
                 var bindingFlags = BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
-                var method = baseType.GetMethod(fetchFuncName, bindingFlags);
+                var method = baseType.GetMethod(localFuncName, bindingFlags);
 
                 // make sure the method returns our property type
-                if (method != null && method.ReturnType == typeof(void))
+                if (method != null && method.ReturnType == returnType)
                 {
                     var parameters = method.GetParameters();
-                    
-                    // custom fetch methods have two parameters, with the first being a serialized property and the second being the attribute itself
-                    if (parameters.Length == 2 && parameters[0].ParameterType == typeof(SerializedProperty) && parameters[1].ParameterType == attribute.GetType())
+
+                    bool failedParamCheck = parameters.Length != parameterTypes.Length;
+                    for (int i = 0; !failedParamCheck && i < parameterTypes.Length; i++)
+                    {
+                        if (parameters[i].ParameterType != parameterTypes[i])
+                        {
+                            failedParamCheck = true;
+                        }
+                    }
+
+                    if (!failedParamCheck)
                     {
                         ret = method;
                     }
@@ -92,6 +100,16 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             }
 
             return ret;
+        }
+        
+        public static MethodInfo GetFetchMethod(SerializedProperty baseProperty, BaseCustomFetchAttribute attribute)
+        {
+            return GetCustomFetchMethod(baseProperty, attribute, attribute.CustomFuncName, typeof(void), typeof(SerializedProperty), attribute.GetType());
+        }
+
+        public static MethodInfo GetFetchValidationMethod(SerializedProperty baseProperty, BaseCustomFetchAttribute attribute)
+        {
+            return GetCustomFetchMethod(baseProperty, attribute, attribute.CustomValidationFuncName, typeof(bool), typeof(SerializedProperty), attribute.GetType());
         }
     }
 
@@ -107,7 +125,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             using (new EditorGUI.DisabledScope(disabled: attachAttributeEnabled))
             {
                 EditorGUI.PropertyField(position, property, label, true);
-                if (attachAttributeEnabled && ((property.isArray && property.arraySize == 0) || property.objectReferenceValue == null))
+                if (attachAttributeEnabled && ShouldUpdateProperty(property))
                 {
                     var type = property.GetPropertyType().StringToComponentType();
                     var go = (property.serializedObject.targetObject as Component).gameObject;
@@ -124,6 +142,12 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             // Do whatever
             // For example to get component 
             // property.objectReferenceValue = go.GetComponent(type);
+        }
+
+        /// Can be customized per attribute
+        public virtual bool ShouldUpdateProperty(SerializedProperty property)
+        {
+            return property.objectReferenceValue == null;
         }
     }
 
@@ -225,6 +249,29 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             {
                 methodInfo.Invoke(null, new object[] { property, fetchAttribute });
             }
+        }
+
+        public override bool ShouldUpdateProperty(SerializedProperty property)
+        {
+            BaseCustomFetchAttribute fetchAttribute = (BaseCustomFetchAttribute)attribute;
+            if (string.IsNullOrEmpty(fetchAttribute.CustomValidationFuncName))
+            {
+                return base.ShouldUpdateProperty(property);
+            }
+            
+            var methodInfo = AttachAttributesUtils.GetFetchValidationMethod(property, fetchAttribute);
+            bool ret = false;
+
+            if (methodInfo == null)
+            {
+                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomValidationFuncName}\"; ensure the method is static that returns a boolean and takes in a \"{nameof(SerializedProperty)}\" for the first parameter and \"{fetchAttribute.GetType().Name}\" as the second parameter.", MessageType.Error);
+            }
+            else
+            {
+                ret = (bool)methodInfo.Invoke(null, new object[] { property, fetchAttribute });
+            }
+
+            return ret;
         }
     }
     #endregion
