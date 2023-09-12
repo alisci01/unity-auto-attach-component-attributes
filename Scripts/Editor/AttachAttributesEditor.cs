@@ -62,13 +62,13 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
         private static Dictionary<(Type, string), MethodInfo> s_FetchMethods =
             new Dictionary<(Type, string), MethodInfo>();
         
-        public static MethodInfo GetFetchMethod(SerializedProperty baseProperty, string fetchFuncName)
+        public static MethodInfo GetFetchMethod(SerializedProperty baseProperty, BaseCustomFetchAttribute attribute)
         {
             MethodInfo ret = null;
             
-            int posOfLastPeriod = fetchFuncName.LastIndexOf('.');
-            Type baseType = fetchFuncName.Substring(0, posOfLastPeriod).StringToStaticType();
-            fetchFuncName = fetchFuncName.Substring(posOfLastPeriod + 1);
+            int posOfLastPeriod = attribute.CustomFuncName.LastIndexOf('.');
+            Type baseType = attribute.CustomFuncName.Substring(0, posOfLastPeriod).StringToStaticType();
+            string fetchFuncName = attribute.CustomFuncName.Substring(posOfLastPeriod + 1);
 
             (Type, string) pair = (baseType, fetchFuncName);
             
@@ -83,8 +83,8 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
                 {
                     var parameters = method.GetParameters();
                     
-                    // custom fetch methods only have a SerializedProperty as a parameter
-                    if (parameters.Length == 1 && parameters[0].ParameterType == typeof(SerializedProperty))
+                    // custom fetch methods have two parameters, with the first being a serialized property and the second being the attribute itself
+                    if (parameters.Length == 2 && parameters[0].ParameterType == typeof(SerializedProperty) && parameters[1].ParameterType == attribute.GetType())
                     {
                         ret = method;
                     }
@@ -214,16 +214,16 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     {
         public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
         {
-            CustomFetchAttribute fetchAttribute = (CustomFetchAttribute)attribute;
-            var methodInfo = AttachAttributesUtils.GetFetchMethod(property, fetchAttribute.CustomFuncName);
+            BaseCustomFetchAttribute fetchAttribute = (BaseCustomFetchAttribute)attribute;
+            var methodInfo = AttachAttributesUtils.GetFetchMethod(property, fetchAttribute);
 
             if (methodInfo == null)
             {
-                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomFuncName}\"; ensure the method is static that returns nothing and takes in a \"{nameof(SerializedProperty)}\" as it's only parameter.", MessageType.Error);
+                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomFuncName}\"; ensure the method is static that returns nothing and takes in a \"{nameof(SerializedProperty)}\" for the first parameter and \"{fetchAttribute.GetType().Name}\" as the second parameter.", MessageType.Error);
             }
             else
             {
-                methodInfo.Invoke(null, new object[] { property });
+                methodInfo.Invoke(null, new object[] { property, fetchAttribute });
             }
         }
     }
