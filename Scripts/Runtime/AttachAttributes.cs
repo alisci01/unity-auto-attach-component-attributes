@@ -40,6 +40,7 @@ namespace Nrjwolf.Tools.AttachAttributes
         protected BaseCustomFetchAttribute(string funcName, string validationFuncName = null)
         {
             CustomFuncName = funcName;
+            CustomValidationFuncName = validationFuncName;
         }
     }
 
