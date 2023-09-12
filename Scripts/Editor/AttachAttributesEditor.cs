@@ -65,50 +65,26 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
         public static MethodInfo GetFetchMethod(SerializedProperty baseProperty, string fetchFuncName)
         {
             MethodInfo ret = null;
+            
+            int posOfLastPeriod = fetchFuncName.LastIndexOf('.');
+            Type baseType = fetchFuncName.Substring(0, posOfLastPeriod).StringToStaticType();
+            fetchFuncName = fetchFuncName.Substring(posOfLastPeriod + 1);
 
-            Type baseType = null;
-            (Type, string) pair;
-            bool usesStaticMethod = fetchFuncName.Contains(".");
-
-            if (usesStaticMethod)
-            {
-                int posOfLastPeriod = fetchFuncName.LastIndexOf('.');
-                baseType = fetchFuncName.Substring(0, posOfLastPeriod).StringToStaticType();
-                fetchFuncName = fetchFuncName.Substring(posOfLastPeriod + 1);
-            }
-            else
-            {
-                baseType = baseProperty.serializedObject.targetObject.GetType();
-            }
-
-            pair = (baseType, fetchFuncName);
+            (Type, string) pair = (baseType, fetchFuncName);
             
             // reflect the proper method if we don't have it cached already
             if (!s_FetchMethods.TryGetValue(pair, out ret))
             {
-                var bindingFlags = BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.NonPublic;
-                if (usesStaticMethod)
-                {
-                    bindingFlags |= BindingFlags.Static;
-                }
-                else
-                {
-                    bindingFlags |= BindingFlags.Instance;
-                }
-                
+                var bindingFlags = BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
                 var method = baseType.GetMethod(fetchFuncName, bindingFlags);
 
                 // make sure the method returns our property type
-                if (method != null && method.ReturnType == baseProperty.GetPropertyType().StringToComponentType())
+                if (method != null && method.ReturnType == typeof(void))
                 {
                     var parameters = method.GetParameters();
                     
-                    // static methods should only have a single GameObject parameters
-                    bool validStaticMethod = usesStaticMethod && parameters.Length == 1 && parameters[0].ParameterType == typeof(UnityEngine.GameObject);
-                    // instance methods should have no parameters at all
-                    bool validInstanceMethod = !usesStaticMethod && parameters.Length == 0;
-                    
-                    if (validInstanceMethod || validStaticMethod)
+                    // custom fetch methods only have a SerializedProperty as a parameter
+                    if (parameters.Length == 1 && parameters[0].ParameterType == typeof(SerializedProperty))
                     {
                         ret = method;
                     }
@@ -131,7 +107,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             using (new EditorGUI.DisabledScope(disabled: attachAttributeEnabled))
             {
                 EditorGUI.PropertyField(position, property, label, true);
-                if (attachAttributeEnabled && property.objectReferenceValue == null)
+                if (attachAttributeEnabled && ((property.isArray && property.arraySize == 0) || property.objectReferenceValue == null))
                 {
                     var type = property.GetPropertyType().StringToComponentType();
                     var go = (property.serializedObject.targetObject as Component).gameObject;
@@ -243,12 +219,11 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
 
             if (methodInfo == null)
             {
-                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomFuncName}\"; ensure the method returns {property.GetPropertyType()} and no parameters if it is not static. If the method is static, it must take a single GameObject parameter.", MessageType.Error);
+                EditorGUILayout.HelpBox($"Unable to find method \"{fetchAttribute.CustomFuncName}\"; ensure the method is static that returns nothing and takes in a \"{nameof(SerializedProperty)}\" as it's only parameter.", MessageType.Error);
             }
             else
             {
-                object instance = methodInfo.IsStatic ? null : property.serializedObject.targetObject;
-                property.objectReferenceValue = (UnityEngine.Object)methodInfo.Invoke(instance, methodInfo.IsStatic ? new object[] { ((Component)property.serializedObject.targetObject).gameObject } : null);
+                methodInfo.Invoke(null, new object[] { property });
             }
         }
     }
