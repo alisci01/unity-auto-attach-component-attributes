@@ -78,6 +78,9 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
 
         // prefetch certain types
         private static Type[] s_AllTypes = System.AppDomain.CurrentDomain.GetAssemblies().SelectMany(x => x.GetTypes()).ToArray();
+        private static Type[] s_SerializableTypes = s_AllTypes.Where(x =>
+            x.IsSubclassOf(typeof(Component)) ||
+            x.GetCustomAttributes(true).Any(attr => attr is SerializableAttribute)).ToArray();
         private static Type[] s_AllComponentTypes = s_AllTypes.Where(x => x.IsSubclassOf(typeof(Component))).ToArray();
         private static Type[] s_AllStaticTypes = s_AllTypes.Where(x => x.IsAbstract && x.IsSealed).ToArray();
         private static Type[] s_AllPropertyDrawers = s_AllTypes.Where(x => x.IsSubclassOf(typeof(PropertyDrawer))).ToArray();
@@ -94,7 +97,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             if (!s_PropertyDrawers.TryGetValue(key, out var drawer))
             {
                 var propertyTypeStr = prop.GetPropertyType();
-                var propertyType = s_AllTypes.First(x => x.Name == propertyTypeStr);
+                var propertyType = s_SerializableTypes.First(x => x.Name == propertyTypeStr);
 
                 try
                 {
