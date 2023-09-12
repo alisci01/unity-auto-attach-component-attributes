@@ -51,13 +51,96 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             return type;
         }
 
+        public static GameObject GetGameObject(this SerializedProperty property)
+        {
+            return (property.serializedObject.targetObject as Component).gameObject;
+        }
+
+        public static Type GetComponentType(this SerializedProperty property)
+        {
+            return property.GetPropertyType().StringToComponentType();
+        }
+
+        private static FieldInfo s_CustomPropertyDrawerTypeField =
+            typeof(CustomPropertyDrawer).GetField("m_Type", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        private static FieldInfo s_CustomPropertyDrawerUseForChildrenField =
+            typeof(CustomPropertyDrawer).GetField("m_UseForChildren",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+
+        public static bool TargetsType(this CustomPropertyDrawer cpd, Type type)
+        {
+            var cpdType = (Type)s_CustomPropertyDrawerTypeField.GetValue(cpd);
+            var useForChildren = (bool)s_CustomPropertyDrawerUseForChildrenField.GetValue(cpd);
+
+            return useForChildren ? type.IsSubclassOf(cpdType) : cpdType == type;
+        }
+
         // prefetch certain types
         private static Type[] s_AllTypes = System.AppDomain.CurrentDomain.GetAssemblies().SelectMany(x => x.GetTypes()).ToArray();
         private static Type[] s_AllComponentTypes = s_AllTypes.Where(x => x.IsSubclassOf(typeof(Component))).ToArray();
         private static Type[] s_AllStaticTypes = s_AllTypes.Where(x => x.IsAbstract && x.IsSealed).ToArray();
+        private static Type[] s_AllPropertyDrawers = s_AllTypes.Where(x => x.IsSubclassOf(typeof(PropertyDrawer))).ToArray();
 
         public static Type StringToComponentType(this string aClassName) => s_AllComponentTypes.First(x => x.Name == aClassName);
-        public static Type StringToStaticType(this string aClassName) => s_AllStaticTypes.First(x => x.Name == aClassName);
+        public static Type StringToStaticType(this string aClassName) => s_AllStaticTypes.First(x => x.FullName == aClassName);
+        
+        private static Dictionary<string, PropertyDrawer> s_PropertyDrawers = new Dictionary<string, PropertyDrawer>();
+
+        private static PropertyDrawer GetPropertyDrawerForProperty(SerializedProperty prop)
+        {
+            string key = prop.propertyPath + prop.serializedObject.targetObject.GetInstanceID();
+
+            if (!s_PropertyDrawers.TryGetValue(key, out var drawer))
+            {
+                var propertyTypeStr = prop.GetPropertyType();
+                var propertyType = s_AllTypes.First(x => x.Name == propertyTypeStr);
+
+                try
+                {
+                    Type drawerType = s_AllPropertyDrawers.First(x =>
+                        x.GetCustomAttributes<CustomPropertyDrawer>().Any(cpd => cpd.TargetsType(propertyType)));
+                
+                    drawer = (PropertyDrawer)Activator.CreateInstance(drawerType);
+                }
+                catch (InvalidOperationException e)
+                {
+                    drawer = null;
+                }
+
+                s_PropertyDrawers[key] = drawer;
+            }
+
+            return drawer;
+        }
+
+        public static void DefaultPropertyGUI(Rect pos, SerializedProperty prop, GUIContent label, bool includeChildren)
+        {
+            PropertyDrawer drawer = GetPropertyDrawerForProperty(prop);
+
+            if (drawer != null)
+            {
+                drawer.OnGUI(pos, prop, label);
+            }
+            else
+            {
+                EditorGUI.PropertyField(pos, prop, label, includeChildren);
+            }
+        }
+
+        public static float GetDefaultPropertyGUIHeight(SerializedProperty prop, GUIContent label)
+        {
+            PropertyDrawer drawer = GetPropertyDrawerForProperty(prop);
+
+            if (drawer != null)
+            {
+                return drawer.GetPropertyHeight(prop, label);
+            }
+            else
+            {
+                return EditorGUI.GetPropertyHeight(prop, label, true);
+            }
+        }
 
         private static Dictionary<(Type, string), MethodInfo> s_FetchMethods =
             new Dictionary<(Type, string), MethodInfo>();
@@ -124,12 +207,10 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
             bool attachAttributeEnabled = AttachAttributesUtils.IsEnabled && !Application.isPlaying;
             using (new EditorGUI.DisabledScope(disabled: attachAttributeEnabled))
             {
-                EditorGUI.PropertyField(position, property, label, true);
+                AttachAttributesUtils.DefaultPropertyGUI(position, property, label, true);
                 if (attachAttributeEnabled && ShouldUpdateProperty(property))
                 {
-                    var type = property.GetPropertyType().StringToComponentType();
-                    var go = (property.serializedObject.targetObject as Component).gameObject;
-                    UpdateProperty(property, go, type);
+                    UpdateProperty(property);
                 }
             }
 
@@ -137,7 +218,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
         }
 
         /// Customize it for each attribute
-        public virtual void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        public virtual void UpdateProperty(SerializedProperty property)
         {
             // Do whatever
             // For example to get component 
@@ -149,6 +230,11 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
         {
             return property.objectReferenceValue == null;
         }
+
+        public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
+        {
+            return AttachAttributesUtils.GetDefaultPropertyGUIHeight(property, label);
+        }
     }
 
     #region Attribute Editors
@@ -157,8 +243,11 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     [CustomPropertyDrawer(typeof(GetComponentAttribute))]
     public class GetComponentAttributeEditor : AttachAttributePropertyDrawer
     {
-        public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        public override void UpdateProperty(SerializedProperty property)
         {
+            var type = property.GetComponentType();
+            var go = property.GetGameObject();
+            
             property.objectReferenceValue = go.GetComponent(type);
         }
     }
@@ -167,8 +256,11 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     [CustomPropertyDrawer(typeof(GetComponentInChildrenAttribute))]
     public class GetComponentInChildrenAttributeEditor : AttachAttributePropertyDrawer
     {
-        public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        public override void UpdateProperty(SerializedProperty property)
         {
+            var type = property.GetComponentType();
+            var go = property.GetGameObject();
+            
             GetComponentInChildrenAttribute labelAttribute = (GetComponentInChildrenAttribute)attribute;
             if (labelAttribute.ChildName == null)
             {
@@ -189,8 +281,11 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     [CustomPropertyDrawer(typeof(AddComponentAttribute))]
     public class AddComponentAttributeEditor : AttachAttributePropertyDrawer
     {
-        public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        public override void UpdateProperty(SerializedProperty property)
         {
+            var type = property.GetComponentType();
+            var go = property.GetGameObject();
+            
             property.objectReferenceValue = go.AddComponent(type);
         }
     }
@@ -199,8 +294,11 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     [CustomPropertyDrawer(typeof(FindObjectOfTypeAttribute))]
     public class FindObjectOfTypeAttributeEditor : AttachAttributePropertyDrawer
     {
-        public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        public override void UpdateProperty(SerializedProperty property)
         {
+            var type = property.GetComponentType();
+            var go = property.GetGameObject();
+            
             property.objectReferenceValue = FindObjectsOfTypeByName(property.GetPropertyType());
         }
 
@@ -224,11 +322,13 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     [CustomPropertyDrawer(typeof(GetComponentInParent))]
     public class GetComponentInParentAttributeEditor : AttachAttributePropertyDrawer
     {
-        public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        public override void UpdateProperty(SerializedProperty property)
         {
+            var type = property.GetComponentType();
+            var go = property.GetGameObject();
+            
             if (go.transform.parent != null)
                 property.objectReferenceValue = go.transform.parent.gameObject.GetComponent(type);
-                
         }
     }
 
@@ -236,7 +336,7 @@ namespace Nrjwolf.Tools.Editor.AttachAttributes
     [CustomPropertyDrawer(typeof(BaseCustomFetchAttribute), useForChildren: true)]
     public class CustomFetchAttributeEditor : AttachAttributePropertyDrawer
     {
-        public override void UpdateProperty(SerializedProperty property, GameObject go, Type type)
+        public override void UpdateProperty(SerializedProperty property)
         {
             BaseCustomFetchAttribute fetchAttribute = (BaseCustomFetchAttribute)attribute;
             var methodInfo = AttachAttributesUtils.GetFetchMethod(property, fetchAttribute);
